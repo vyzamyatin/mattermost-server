@@ -4,7 +4,10 @@
 package storetest
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -13,13 +16,141 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPluginStore(t *testing.T, ss store.Store) {
+func TestPluginStore(t *testing.T, ss store.Store, s SqlSupplier) {
+	t.Run("SaveOrUpdate", func(t *testing.T) { testPluginSaveOrUpdate(t, ss, s) })
 	t.Run("CompareAndSet", func(t *testing.T) { testPluginCompareAndSet(t, ss) })
 	t.Run("PluginSaveGet", func(t *testing.T) { testPluginSaveGet(t, ss) })
 	t.Run("PluginSaveGetExpiry", func(t *testing.T) { testPluginSaveGetExpiry(t, ss) })
 	t.Run("PluginDelete", func(t *testing.T) { testPluginDelete(t, ss) })
 	t.Run("PluginDeleteAll", func(t *testing.T) { testPluginDeleteAll(t, ss) })
 	t.Run("PluginDeleteExpired", func(t *testing.T) { testPluginDeleteExpired(t, ss) })
+}
+
+func testPluginSaveOrUpdate(t *testing.T, ss store.Store, s SqlSupplier) {
+	t.Run("invalid kv", func(t *testing.T) {
+		kv := &model.PluginKeyValue{
+			PluginId: "",
+			Key:      model.NewId(),
+			Value:    []byte(model.NewId()),
+			ExpireAt: 0,
+		}
+
+		kv, err := ss.Plugin().SaveOrUpdate(kv)
+		require.NotNil(t, err)
+		require.Equal(t, "model.plugin_key_value.is_valid.plugin_id.app_error", err.Id)
+		assert.Nil(t, kv)
+	})
+
+	t.Run("new key", func(t *testing.T) {
+		pluginId := model.NewId()
+		key := model.NewId()
+		value := model.NewId()
+		expireAt := int64(0)
+
+		kv := &model.PluginKeyValue{
+			PluginId: pluginId,
+			Key:      key,
+			Value:    []byte(value),
+			ExpireAt: expireAt,
+		}
+
+		retKv, err := ss.Plugin().SaveOrUpdate(kv)
+		require.Nil(t, err)
+		assert.Equal(t, kv, retKv)
+		assert.Equal(t, pluginId, kv.PluginId)
+		assert.Equal(t, key, kv.Key)
+		assert.Equal(t, []byte(value), retKv.Value)
+		assert.Equal(t, expireAt, kv.ExpireAt)
+	})
+
+	t.Run("existing key", func(t *testing.T) {
+		pluginId := model.NewId()
+		key := model.NewId()
+		value := model.NewId()
+		expireAt := int64(0)
+
+		kv := &model.PluginKeyValue{
+			PluginId: pluginId,
+			Key:      key,
+			Value:    []byte(value),
+			ExpireAt: expireAt,
+		}
+
+		_, err := ss.Plugin().SaveOrUpdate(kv)
+		require.Nil(t, err)
+
+		newValue := model.NewId()
+		kv.Value = []byte(newValue)
+		retKv, err := ss.Plugin().SaveOrUpdate(kv)
+
+		require.Nil(t, err)
+		assert.Equal(t, kv, retKv)
+		assert.Equal(t, pluginId, kv.PluginId)
+		assert.Equal(t, key, kv.Key)
+		assert.Equal(t, []byte(newValue), retKv.Value)
+		assert.Equal(t, expireAt, kv.ExpireAt)
+	})
+
+	t.Run("racey inserts", func(t *testing.T) {
+		pluginId := model.NewId()
+		key := model.NewId()
+		value := model.NewId()
+		expireAt := int64(0)
+
+		kv := &model.PluginKeyValue{
+			PluginId: pluginId,
+			Key:      key,
+			Value:    []byte(value),
+			ExpireAt: expireAt,
+		}
+
+		var wg sync.WaitGroup
+		var count int32
+		done := make(chan bool)
+
+		inserter := func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					_, err := ss.Plugin().SaveOrUpdate(kv)
+					require.Nil(t, err)
+					atomic.AddInt32(&count, 1)
+				}
+			}
+		}
+
+		deleter := func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					_, err := s.GetMaster().Exec("DELETE FROM PluginKeyValueStore")
+					require.NoError(t, err)
+				}
+			}
+		}
+
+		wg.Add(1)
+		go inserter()
+		wg.Add(1)
+		go inserter()
+		wg.Add(1)
+		go inserter()
+		wg.Add(1)
+		go deleter()
+
+		require.Eventually(t, func() bool {
+			return atomic.LoadInt32(&count) >= 1000
+		}, 5*time.Second, 100*time.Millisecond)
+
+		close(done)
+		wg.Wait()
+	})
 }
 
 func testPluginCompareAndSet(t *testing.T, ss store.Store) {

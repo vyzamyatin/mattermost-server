@@ -905,6 +905,41 @@ func IsUniqueConstraintError(err error, indexName []string) bool {
 	return unique && field
 }
 
+// isSerializationError returns true if the given error is indicative of a serialization failure,
+// typically caused by competing updates to the same row.
+func isSerializationError(err error) bool {
+	if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "40001" {
+		return true
+	}
+
+	if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == 1213 {
+		return true
+	}
+
+	return false
+}
+
+// retryOnSerializationError automatically retries the given callback up to 3 times if a
+// serialization error occurs.
+//
+// Only use this method if you understand the side effects of blindly retrying the operations.
+func retryOnSerializationError(callback func() error) error {
+	var err error
+
+	for i := 0; i < 3; i++ {
+		err = callback()
+		if err == nil {
+			return nil
+		}
+
+		if !isSerializationError(err) {
+			return err
+		}
+	}
+
+	return err
+}
+
 func (ss *SqlSupplier) GetAllConns() []*gorp.DbMap {
 	all := make([]*gorp.DbMap, len(ss.replicas)+1)
 	copy(all, ss.replicas)

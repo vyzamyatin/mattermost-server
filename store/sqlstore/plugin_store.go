@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	DEFAULT_PLUGIN_KEY_FETCH_LIMIT = 10
+	defaultPluginKeyFetchLimit = 10
 )
 
 type SqlPluginStore struct {
@@ -52,33 +52,21 @@ func (ps SqlPluginStore) SaveOrUpdate(kv *model.PluginKeyValue) (*model.PluginKe
 		return kv, nil
 	}
 
-	err := retryOnSerializationError(func() error {
-		if ps.DriverName() == model.DATABASE_DRIVER_POSTGRES {
-			// Unfortunately PostgreSQL pre-9.5 does not have an atomic upsert, so we use
-			// separate update and insert queries to accomplish our upsert
-			if rowsAffected, err := ps.GetMaster().Update(kv); err != nil {
-				return err
-			} else if rowsAffected == 0 {
-				// No rows were affected by the update, so let's try an insert
-				if err := ps.GetMaster().Insert(kv); err != nil {
-					// If the error is from unique constraints violation, it's the result of a
-					// valid race and we can report success. Otherwise we have a real error and
-					// need to return it
-					if !IsUniqueConstraintError(err, []string{"PRIMARY", "PluginId", "Key", "PKey", "pkey"}) {
-						return err
-					}
-				}
-			}
-		} else if ps.DriverName() == model.DATABASE_DRIVER_MYSQL {
-			if _, err := ps.GetMaster().Exec("INSERT INTO PluginKeyValueStore (PluginId, PKey, PValue, ExpireAt) VALUES(:PluginId, :Key, :Value, :ExpireAt) ON DUPLICATE KEY UPDATE PValue = :Value, ExpireAt = :ExpireAt", map[string]interface{}{"PluginId": kv.PluginId, "Key": kv.Key, "Value": kv.Value, "ExpireAt": kv.ExpireAt}); err != nil {
-				return err
+	if ps.DriverName() == model.DATABASE_DRIVER_POSTGRES {
+		// Unfortunately PostgreSQL pre-9.5 does not have an atomic upsert, so we use
+		// separate update and insert queries to accomplish our upsert
+		if rowsAffected, err := ps.GetMaster().Update(kv); err != nil {
+			return nil, model.NewAppError("SqlPluginStore.SaveOrUpdate", "store.sql_plugin_store.save.app_error", nil, err.Error(), http.StatusInternalServerError)
+		} else if rowsAffected == 0 {
+			// No rows were affected by the update, so let's try an insert
+			if err := ps.GetMaster().Insert(kv); err != nil {
+				return nil, model.NewAppError("SqlPluginStore.SaveOrUpdate", "store.sql_plugin_store.save.app_error", nil, err.Error(), http.StatusInternalServerError)
 			}
 		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, model.NewAppError("SqlPluginStore.SaveOrUpdate", "store.sql_plugin_store.save.app_error", nil, err.Error(), http.StatusInternalServerError)
+	} else if ps.DriverName() == model.DATABASE_DRIVER_MYSQL {
+		if _, err := ps.GetMaster().Exec("INSERT INTO PluginKeyValueStore (PluginId, PKey, PValue, ExpireAt) VALUES(:PluginId, :Key, :Value, :ExpireAt) ON DUPLICATE KEY UPDATE PValue = :Value, ExpireAt = :ExpireAt", map[string]interface{}{"PluginId": kv.PluginId, "Key": kv.Key, "Value": kv.Value, "ExpireAt": kv.ExpireAt}); err != nil {
+			return nil, model.NewAppError("SqlPluginStore.SaveOrUpdate", "store.sql_plugin_store.save.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	return kv, nil
@@ -252,7 +240,7 @@ func (ps SqlPluginStore) DeleteAllExpired() *model.AppError {
 
 func (ps SqlPluginStore) List(pluginId string, offset int, limit int) ([]string, *model.AppError) {
 	if limit <= 0 {
-		limit = DEFAULT_PLUGIN_KEY_FETCH_LIMIT
+		limit = defaultPluginKeyFetchLimit
 	}
 
 	if offset <= 0 {
@@ -260,7 +248,25 @@ func (ps SqlPluginStore) List(pluginId string, offset int, limit int) ([]string,
 	}
 
 	var keys []string
-	_, err := ps.GetReplica().Select(&keys, "SELECT PKey FROM PluginKeyValueStore WHERE PluginId = :PluginId order by PKey limit :Limit offset :Offset", map[string]interface{}{"PluginId": pluginId, "Limit": limit, "Offset": offset})
+	_, err := ps.GetReplica().Select(&keys, `
+		SELECT
+			PKey
+		FROM
+			PluginKeyValueStore
+		WHERE
+			PluginId = :PluginId
+		AND
+			(ExpireAt = 0 OR ExpireAt > :CurrentTime)
+		ORDER BY
+			PKey
+		LIMIT :Limit
+		OFFSET :Offset
+	`, map[string]interface{}{
+		"PluginId":    pluginId,
+		"Limit":       limit,
+		"Offset":      offset,
+		"CurrentTime": model.GetMillis(),
+	})
 	if err != nil {
 		return nil, model.NewAppError("SqlPluginStore.List", "store.sql_plugin_store.list.app_error", nil, fmt.Sprintf("plugin_id=%v, err=%v", pluginId, err.Error()), http.StatusInternalServerError)
 	}

@@ -922,11 +922,11 @@ func isSerializationError(err error) bool {
 // retryOnSerializationError automatically retries the given callback up to 3 times if a
 // serialization error occurs.
 //
-// Only use this method if you understand the side effects of blindly retrying the operations.
-func retryOnSerializationError(callback func() error) error {
+// Only use this method if you understand the side effects of blindly retrying.
+func retryOnSerializationError(attempts int, callback func() error) error {
 	var err error
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < attempts; i++ {
 		err = callback()
 		if err == nil {
 			return nil

@@ -6,13 +6,8 @@ package storetest
 import (
 	"net/http"
 	"sort"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/go-sql-driver/mysql"
-	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-server/v5/model"
@@ -23,7 +18,7 @@ import (
 func TestPluginStore(t *testing.T, ss store.Store, s SqlSupplier) {
 	t.Run("SaveOrUpdate", func(t *testing.T) { testPluginSaveOrUpdate(t, ss, s) })
 	t.Run("CompareAndSet", func(t *testing.T) { testPluginCompareAndSet(t, ss, s) })
-	// t.Run("CompareAndDelete", func(t *testing.T) { testPluginCompareAndDelete(t, ss) })
+	t.Run("CompareAndDelete", func(t *testing.T) { testPluginCompareAndDelete(t, ss, s) })
 	// t.Run("SetWithOptions", func(t *testing.T) { testPluginSetWithOptions(t, ss) })
 	t.Run("Get", func(t *testing.T) { testPluginGet(t, ss) })
 	t.Run("Delete", func(t *testing.T) { testPluginDelete(t, ss) })
@@ -67,85 +62,6 @@ func setupKVs(t *testing.T, ss store.Store) (string, func()) {
 		require.Nil(t, err, "failed to find other key value from different plugin")
 		assert.Equal(t, otherPluginKV, actualOtherPluginKV)
 	}
-}
-
-// raceyInserts stresses the given callback for setting a key by running it in parallel until
-// a successful number of updates occur, all while also deleting the key repeatedly.
-func raceyInserts(t *testing.T, ss store.Store, s SqlSupplier, callback func(kv *model.PluginKeyValue) error) {
-	pluginId, tearDown := setupKVs(t, ss)
-	defer tearDown()
-
-	key := model.NewId()
-	value := model.NewId()
-	expireAt := int64(0)
-
-	kv := &model.PluginKeyValue{
-		PluginId: pluginId,
-		Key:      key,
-		Value:    []byte(value),
-		ExpireAt: expireAt,
-	}
-
-	var wg sync.WaitGroup
-	var count int32
-	done := make(chan bool)
-
-	// Repeatedly try to re-write the key value
-	inserter := func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				err := callback(kv)
-				if err != nil {
-					// Duplicate isSerializationError to avoid circular import
-					if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "40001" {
-						continue
-					}
-
-					if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == 1213 {
-						continue
-					}
-
-					require.Nil(t, err, "expected nil or serialization error")
-				}
-				atomic.AddInt32(&count, 1)
-			}
-		}
-	}
-
-	// Repeatedly delete all key values
-	deleter := func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				_, err := s.GetMaster().Exec("DELETE FROM PluginKeyValueStore WHERE PKey = :key", map[string]interface{}{"key": key})
-				require.NoError(t, err)
-			}
-		}
-	}
-
-	// Spawn three competing inserters, and a task that consistently deletes records.
-	wg.Add(1)
-	go inserter()
-	wg.Add(1)
-	go inserter()
-	wg.Add(1)
-	go inserter()
-	wg.Add(1)
-	go deleter()
-
-	assert.Eventually(t, func() bool {
-		return atomic.LoadInt32(&count) >= 1000
-	}, 15*time.Second, 100*time.Millisecond)
-
-	close(done)
-	wg.Wait()
 }
 
 func testPluginSaveOrUpdate(t *testing.T, ss store.Store, s SqlSupplier) {
@@ -300,13 +216,6 @@ func testPluginSaveOrUpdate(t *testing.T, ss store.Store, s SqlSupplier) {
 		assert.Equal(t, err.StatusCode, http.StatusNotFound)
 		assert.Nil(t, actualKV)
 	})
-
-	t.Run("racey inserts", func(t *testing.T) {
-		raceyInserts(t, ss, s, func(kv *model.PluginKeyValue) error {
-			_, err := ss.Plugin().SaveOrUpdate(kv)
-			return err
-		})
-	})
 }
 
 func testPluginCompareAndSet(t *testing.T, ss store.Store, s SqlSupplier) {
@@ -327,288 +236,393 @@ func testPluginCompareAndSet(t *testing.T, ss store.Store, s SqlSupplier) {
 		assert.False(t, ok)
 	})
 
-	// Note: CompareAndSet with a nil new value is explicitly tested in CompareAndDelete.
+	// assertChanged verifies that CompareAndSet successfully changes to the given value.
+	assertChanged := func(t *testing.T, kv *model.PluginKeyValue, oldValue []byte) {
+		t.Helper()
 
-	t.Run("permutations", func(t *testing.T) {
-		// The plugin id and key are signal values, and rewritten during the test case execution.
-		pluginId := model.NewId()
+		ok, err := ss.Plugin().CompareAndSet(kv, oldValue)
+		require.Nil(t, err)
+		require.True(t, ok, "should have succeeded to CompareAndSet")
+
+		actualKV, err := ss.Plugin().Get(kv.PluginId, kv.Key)
+		require.Nil(t, err)
+		assert.Equal(t, kv, actualKV)
+	}
+
+	// assertUnchanged verifies that CompareAndSet fails, leaving the existing value.
+	assertUnchanged := func(t *testing.T, kv, existingKV *model.PluginKeyValue, oldValue []byte) {
+		t.Helper()
+
+		ok, err := ss.Plugin().CompareAndSet(kv, oldValue)
+		require.Nil(t, err)
+		require.False(t, ok, "should have failed to CompareAndSet")
+
+		actualKV, err := ss.Plugin().Get(kv.PluginId, kv.Key)
+		if existingKV == nil {
+			require.NotNil(t, err)
+			assert.Equal(t, err.StatusCode, http.StatusNotFound)
+			assert.Nil(t, actualKV)
+		} else {
+			require.Nil(t, err)
+			assert.Equal(t, existingKV, actualKV)
+		}
+	}
+
+	// assertRemoved verifies that CompareAndSet successfully removes the given value.
+	assertRemoved := func(t *testing.T, kv *model.PluginKeyValue, oldValue []byte) {
+		t.Helper()
+
+		ok, err := ss.Plugin().CompareAndSet(kv, oldValue)
+		require.Nil(t, err)
+		require.True(t, ok, "should have succeeded to CompareAndSet")
+
+		actualKV, err := ss.Plugin().Get(kv.PluginId, kv.Key)
+		require.NotNil(t, err)
+		assert.Equal(t, err.StatusCode, http.StatusNotFound)
+		assert.Nil(t, actualKV)
+	}
+
+	for description, setup := range map[string]func(t *testing.T) (*model.PluginKeyValue, func()){
+		"non-existent key": func(t *testing.T) (*model.PluginKeyValue, func()) {
+			pluginId, tearDown := setupKVs(t, ss)
+
+			kv := &model.PluginKeyValue{
+				PluginId: pluginId,
+				Key:      model.NewId(),
+				Value:    []byte(model.NewId()),
+				ExpireAt: 0,
+			}
+
+			return kv, tearDown
+		},
+		"expired key": func(t *testing.T) (*model.PluginKeyValue, func()) {
+			pluginId, tearDown := setupKVs(t, ss)
+
+			expiredKV := &model.PluginKeyValue{
+				PluginId: pluginId,
+				Key:      model.NewId(),
+				Value:    []byte(model.NewId()),
+				ExpireAt: 1,
+			}
+			_, err := ss.Plugin().SaveOrUpdate(expiredKV)
+			require.Nil(t, err)
+
+			return expiredKV, tearDown
+		},
+	} {
+		t.Run(description, func(t *testing.T) {
+			t.Run("setting a nil value should fail", func(t *testing.T) {
+				testCases := map[string][]byte{
+					"given nil old value":     nil,
+					"given non-nil old value": []byte(model.NewId()),
+				}
+
+				for description, oldValue := range testCases {
+					t.Run(description, func(t *testing.T) {
+						kv, tearDown := setup(t)
+						defer tearDown()
+
+						kv.Value = nil
+						assertUnchanged(t, kv, nil, oldValue)
+					})
+				}
+			})
+
+			t.Run("setting a non-nil value", func(t *testing.T) {
+				t.Run("should succeed given non-expiring, nil old value", func(t *testing.T) {
+					kv, tearDown := setup(t)
+					defer tearDown()
+
+					kv.ExpireAt = 0
+					assertChanged(t, kv, []byte(nil))
+				})
+
+				t.Run("should succeed given not-yet-expired, nil old value", func(t *testing.T) {
+					kv, tearDown := setup(t)
+					defer tearDown()
+
+					kv.ExpireAt = model.GetMillis() + 15*1000
+					assertChanged(t, kv, []byte(nil))
+				})
+
+				t.Run("should fail given expired, nil old value", func(t *testing.T) {
+					kv, tearDown := setup(t)
+					defer tearDown()
+
+					kv.ExpireAt = 1
+					assertRemoved(t, kv, []byte(nil))
+				})
+
+				t.Run("should fail given 'different' old value", func(t *testing.T) {
+					kv, tearDown := setup(t)
+					defer tearDown()
+
+					assertUnchanged(t, kv, nil, []byte(model.NewId()))
+				})
+
+				t.Run("should fail given 'same' old value", func(t *testing.T) {
+					kv, tearDown := setup(t)
+					defer tearDown()
+
+					assertUnchanged(t, kv, nil, kv.Value)
+				})
+			})
+		})
+	}
+
+	t.Run("existing key", func(t *testing.T) {
+		setup := func(t *testing.T) (*model.PluginKeyValue, func()) {
+			pluginId, tearDown := setupKVs(t, ss)
+
+			existingKV := &model.PluginKeyValue{
+				PluginId: pluginId,
+				Key:      model.NewId(),
+				Value:    []byte(model.NewId()),
+				ExpireAt: 0,
+			}
+			_, err := ss.Plugin().SaveOrUpdate(existingKV)
+			require.Nil(t, err)
+
+			return existingKV, tearDown
+		}
+
+		testCases := map[string]bool{
+			// CompareAndSet should succeed even if the value isn't changing.
+			"setting the same value":    true,
+			"setting a different value": false,
+		}
+
+		for description, setToSameValue := range testCases {
+			makeKV := func(t *testing.T, existingKV *model.PluginKeyValue) *model.PluginKeyValue {
+				kv := &model.PluginKeyValue{
+					PluginId: existingKV.PluginId,
+					Key:      existingKV.Key,
+					ExpireAt: existingKV.ExpireAt,
+				}
+				if setToSameValue {
+					kv.Value = existingKV.Value
+				} else {
+					kv.Value = []byte(model.NewId())
+				}
+
+				return kv
+			}
+
+			t.Run(description, func(t *testing.T) {
+				t.Run("should fail", func(t *testing.T) {
+					testCases := map[string][]byte{
+						"given nil old value":       nil,
+						"given different old value": []byte(model.NewId()),
+					}
+
+					for description, oldValue := range testCases {
+						t.Run(description, func(t *testing.T) {
+							existingKV, tearDown := setup(t)
+							defer tearDown()
+
+							kv := makeKV(t, existingKV)
+							assertUnchanged(t, kv, existingKV, oldValue)
+						})
+					}
+				})
+
+				t.Run("should succeed given same old value", func(t *testing.T) {
+					existingKV, tearDown := setup(t)
+					defer tearDown()
+
+					kv := makeKV(t, existingKV)
+
+					assertChanged(t, kv, existingKV.Value)
+				})
+
+				t.Run("and future expiry should succeed given same old value", func(t *testing.T) {
+					existingKV, tearDown := setup(t)
+					defer tearDown()
+
+					kv := makeKV(t, existingKV)
+					kv.ExpireAt = model.GetMillis() + 15*1000
+
+					assertChanged(t, kv, existingKV.Value)
+				})
+
+				t.Run("and past expiry should succeed given same old value", func(t *testing.T) {
+					existingKV, tearDown := setup(t)
+					defer tearDown()
+
+					kv := makeKV(t, existingKV)
+					kv.ExpireAt = model.GetMillis() - 15*1000
+
+					assertRemoved(t, kv, existingKV.Value)
+				})
+			})
+		}
+
+		t.Run("setting a nil value", func(t *testing.T) {
+			makeKV := func(t *testing.T, existingKV *model.PluginKeyValue) *model.PluginKeyValue {
+				kv := &model.PluginKeyValue{
+					PluginId: existingKV.PluginId,
+					Key:      existingKV.Key,
+					Value:    existingKV.Value,
+					ExpireAt: existingKV.ExpireAt,
+				}
+				kv.Value = nil
+
+				return kv
+			}
+
+			t.Run("should fail", func(t *testing.T) {
+				testCases := map[string][]byte{
+					"given nil old value":       nil,
+					"given different old value": []byte(model.NewId()),
+				}
+
+				for description, oldValue := range testCases {
+					t.Run(description, func(t *testing.T) {
+						existingKV, tearDown := setup(t)
+						defer tearDown()
+
+						kv := makeKV(t, existingKV)
+						assertUnchanged(t, kv, existingKV, oldValue)
+					})
+				}
+			})
+
+			t.Run("should succeed, deleting, given same old value", func(t *testing.T) {
+				existingKV, tearDown := setup(t)
+				defer tearDown()
+
+				kv := makeKV(t, existingKV)
+				assertRemoved(t, kv, existingKV.Value)
+			})
+		})
+	})
+}
+
+func testPluginCompareAndDelete(t *testing.T, ss store.Store, s SqlSupplier) {
+	t.Run("invalid kv", func(t *testing.T) {
+		_, tearDown := setupKVs(t, ss)
+		defer tearDown()
+
+		kv := &model.PluginKeyValue{
+			PluginId: "",
+			Key:      model.NewId(),
+			Value:    []byte(model.NewId()),
+			ExpireAt: 0,
+		}
+
+		ok, err := ss.Plugin().CompareAndDelete(kv, nil)
+		require.NotNil(t, err)
+		assert.Equal(t, "model.plugin_key_value.is_valid.plugin_id.app_error", err.Id)
+		assert.False(t, ok)
+	})
+
+	t.Run("non-existent key should fail", func(t *testing.T) {
+		pluginId, tearDown := setupKVs(t, ss)
+		defer tearDown()
+
 		key := model.NewId()
 		value := model.NewId()
 		expireAt := int64(0)
 
-		testCases := []struct {
-			Description     string
-			KV              *model.PluginKeyValue
-			OldValue        []byte
-			ExpectedSuccess bool
-			ExpectedFound   bool
-		}{
-			{
-				Description: "set non-existent key should succeed given nil old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      model.NewId(),
-					Value:    []byte(model.NewId()),
-					ExpireAt: 0,
-				},
-				OldValue:        nil,
-				ExpectedSuccess: true,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set non-existent key with nil value should succeed given nil old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      model.NewId(),
-					Value:    nil,
-					ExpireAt: 0,
-				},
-				OldValue:        nil,
-				ExpectedSuccess: false,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set non-existent key with future expiry should succeed given nil old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      model.NewId(),
-					Value:    []byte(model.NewId()),
-					ExpireAt: model.GetMillis() + 15*1000,
-				},
-				OldValue:        nil,
-				ExpectedSuccess: true,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set non-existent key should fail given non-nil old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      model.NewId(),
-					Value:    []byte(model.NewId()),
-					ExpireAt: 0,
-				},
-				OldValue:        []byte(model.NewId()),
-				ExpectedSuccess: false,
-				ExpectedFound:   false,
-			},
-			{
-				Description: "set non-existent key with nil value should fail given non-nil old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      model.NewId(),
-					Value:    nil,
-					ExpireAt: 0,
-				},
-				OldValue:        []byte(model.NewId()),
-				ExpectedSuccess: false,
-				ExpectedFound:   false,
-			},
-			{
-				Description: "set existing key with same value should fail given nil old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    []byte(value),
-					ExpireAt: 0,
-				},
-				OldValue:        nil,
-				ExpectedSuccess: false,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set existing key with different value should fail given nil old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    []byte(model.NewId()),
-					ExpireAt: 0,
-				},
-				OldValue:        nil,
-				ExpectedSuccess: false,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set existing key with nil value should fail given different old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    nil,
-					ExpireAt: 0,
-				},
-				OldValue:        []byte(model.NewId()),
-				ExpectedSuccess: false,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set existing key with same value should fail given different old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    []byte(value),
-					ExpireAt: 0,
-				},
-				OldValue:        []byte(model.NewId()),
-				ExpectedSuccess: false,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set existing key with different value should fail given different old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    []byte(model.NewId()),
-					ExpireAt: 0,
-				},
-				OldValue:        []byte(model.NewId()),
-				ExpectedSuccess: false,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set existing key with nil value should succeed, deleting, given same old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    nil,
-					ExpireAt: 0,
-				},
-				OldValue:        []byte(value),
-				ExpectedSuccess: true,
-				ExpectedFound:   false,
-			},
-			{
-				Description: "set existing key with same value should succeed given same old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    []byte(value),
-					ExpireAt: 0,
-				},
-				OldValue:        []byte(value),
-				ExpectedSuccess: true,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set existing key with different value should succeed given same old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    []byte(model.NewId()),
-					ExpireAt: 0,
-				},
-				OldValue:        []byte(value),
-				ExpectedSuccess: true,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set existing key with same value and future expiry should succeed given same old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    []byte(value),
-					ExpireAt: model.GetMillis() + 15*1000,
-				},
-				OldValue:        []byte(value),
-				ExpectedSuccess: true,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set existing key with different value and future expiry should succeed given same old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    []byte(model.NewId()),
-					ExpireAt: model.GetMillis() + 15*1000,
-				},
-				OldValue:        []byte(value),
-				ExpectedSuccess: true,
-				ExpectedFound:   true,
-			},
-			{
-				Description: "set existing key with same value and past expiry should succeed given same old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    []byte(value),
-					ExpireAt: model.GetMillis() - 15*1000,
-				},
-				OldValue:        []byte(value),
-				ExpectedSuccess: true,
-				ExpectedFound:   false,
-			},
-			{
-				Description: "set existing key with different value and past expiry should succeed given same old value",
-				KV: &model.PluginKeyValue{
-					PluginId: pluginId,
-					Key:      key,
-					Value:    []byte(model.NewId()),
-					ExpireAt: model.GetMillis() - 15*1000,
-				},
-				OldValue:        []byte(value),
-				ExpectedSuccess: true,
-				ExpectedFound:   false,
-			},
+		kv := &model.PluginKeyValue{
+			PluginId: pluginId,
+			Key:      key,
+			Value:    []byte(value),
+			ExpireAt: expireAt,
 		}
 
-		for _, testCase := range testCases {
-			t.Run(testCase.Description, func(t *testing.T) {
-				// Isolate the tests by always using a new plugin id / key each time.
-				actualPluginId, tearDown := setupKVs(t, ss)
-				defer tearDown()
+		testCases := map[string][]byte{
+			"given nil old value":     nil,
+			"given non-nil old value": []byte(model.NewId()),
+		}
 
-				actualKey := model.NewId()
-
-				kv := &model.PluginKeyValue{
-					PluginId: actualPluginId,
-					Key:      actualKey,
-					Value:    []byte(value),
-					ExpireAt: expireAt,
-				}
-				_, err := ss.Plugin().SaveOrUpdate(kv)
+		for description, oldValue := range testCases {
+			t.Run(description, func(t *testing.T) {
+				ok, err := ss.Plugin().CompareAndDelete(kv, oldValue)
 				require.Nil(t, err)
-
-				testCase.KV.PluginId = actualPluginId
-				if testCase.KV.Key == key {
-					testCase.KV.Key = actualKey
-				}
-
-				ok, err := ss.Plugin().CompareAndSet(testCase.KV, testCase.OldValue)
-				require.Nil(t, err)
-				assert.Equal(t, ok, testCase.ExpectedSuccess)
-
-				if testCase.ExpectedSuccess {
-					if testCase.ExpectedFound {
-						actualKV, err := ss.Plugin().Get(testCase.KV.PluginId, testCase.KV.Key)
-						require.Nil(t, err)
-						assert.Equal(t, testCase.KV, actualKV)
-					} else {
-						actualKV, err := ss.Plugin().Get(testCase.KV.PluginId, testCase.KV.Key)
-						assert.Equal(t, err.StatusCode, http.StatusNotFound)
-						assert.Nil(t, actualKV)
-					}
-				} else {
-					actualKV, err := ss.Plugin().Get(testCase.KV.PluginId, testCase.KV.Key)
-
-					if testCase.KV.Key == actualKey {
-						// If attempting to update the existing key, assume the
-						// value is unchanged
-						require.Nil(t, err)
-						assert.Equal(t, kv, actualKV)
-					} else {
-						// If attempting to update any other key, assume the
-						// value is never saved.
-						assert.Equal(t, err.StatusCode, http.StatusNotFound)
-						assert.Nil(t, actualKV)
-					}
-				}
+				assert.False(t, ok)
 			})
 		}
 	})
 
-	t.Run("racey inserts", func(t *testing.T) {
-		raceyInserts(t, ss, s, func(kv *model.PluginKeyValue) error {
-			_, err := ss.Plugin().CompareAndSet(kv, nil)
-			return err
-		})
+	t.Run("expired key should fail", func(t *testing.T) {
+		pluginId, tearDown := setupKVs(t, ss)
+		defer tearDown()
+
+		key := model.NewId()
+		value := model.NewId()
+		expireAt := int64(1)
+
+		kv := &model.PluginKeyValue{
+			PluginId: pluginId,
+			Key:      key,
+			Value:    []byte(value),
+			ExpireAt: expireAt,
+		}
+		_, err := ss.Plugin().SaveOrUpdate(kv)
+		require.Nil(t, err)
+
+		testCases := map[string][]byte{
+			"given nil old value":       nil,
+			"given different old value": []byte(model.NewId()),
+			"given same old value":      []byte(value),
+		}
+
+		for description, oldValue := range testCases {
+			t.Run(description, func(t *testing.T) {
+				ok, err := ss.Plugin().CompareAndDelete(kv, oldValue)
+				require.Nil(t, err)
+				assert.False(t, ok)
+			})
+		}
+	})
+
+	t.Run("existing key should fail given different old value", func(t *testing.T) {
+		pluginId, tearDown := setupKVs(t, ss)
+		defer tearDown()
+
+		key := model.NewId()
+		value := model.NewId()
+		expireAt := int64(0)
+
+		kv := &model.PluginKeyValue{
+			PluginId: pluginId,
+			Key:      key,
+			Value:    []byte(value),
+			ExpireAt: expireAt,
+		}
+		_, err := ss.Plugin().SaveOrUpdate(kv)
+		require.Nil(t, err)
+
+		oldValue := []byte(model.NewId())
+
+		ok, err := ss.Plugin().CompareAndDelete(kv, oldValue)
+		require.Nil(t, err)
+		assert.False(t, ok)
+	})
+
+	t.Run("existing key should succeed given same old value", func(t *testing.T) {
+		pluginId, tearDown := setupKVs(t, ss)
+		defer tearDown()
+
+		key := model.NewId()
+		value := model.NewId()
+		expireAt := int64(0)
+
+		kv := &model.PluginKeyValue{
+			PluginId: pluginId,
+			Key:      key,
+			Value:    []byte(value),
+			ExpireAt: expireAt,
+		}
+		_, err := ss.Plugin().SaveOrUpdate(kv)
+		require.Nil(t, err)
+
+		oldValue := []byte(value)
+
+		ok, err := ss.Plugin().CompareAndDelete(kv, oldValue)
+		require.Nil(t, err)
+		assert.True(t, ok)
 	})
 }
 

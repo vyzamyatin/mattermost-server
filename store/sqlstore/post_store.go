@@ -1026,6 +1026,54 @@ func (s *SqlPostStore) getPostsAround(before bool, options model.GetPostsOptions
 	return list, nil
 }
 
+func (s *SqlPostStore) GetChannelPostsUA(channelId string, after, before int64, desc bool, page int, perPage int) (*model.PostList, error) {
+	var sort string
+	if desc {
+		sort = "DESC"
+	} else {
+		sort = "ASC"
+	}
+
+	params := map[string]interface{}{"ChannelId": channelId, "Limit": perPage, "Offset": page * perPage}
+
+	query := `SELECT * FROM Posts WHERE ChannelId = :ChannelId AND DeleteAt = 0`
+
+	if after > 0 {
+		query = query + ` AND CreateAt > :After`
+		params["After"] = after
+	}
+	if before > 0 {
+		query = query + ` AND CreateAt < :Before`
+		params["Before"] = before
+	}
+
+	query = query + ` ORDER BY CreateAt ` + sort + ` Limit :Limit OFFSET :Offset`
+
+	var posts []*model.Post
+	_, err := s.GetReplica().Select(&posts, query, params)
+
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to find Posts with channelId=%s", channelId)
+	} else {
+		list := model.NewPostList()
+
+		if desc {
+			l := len(posts)
+			for i := range posts {
+				list.AddPost(posts[l-i-1])
+				list.AddOrder(posts[l-i-1].Id)
+			}
+		} else {
+			for _, p := range posts {
+				list.AddPost(p)
+				list.AddOrder(p.Id)
+			}
+		}
+
+		return list, nil
+	}
+}
+
 func (s *SqlPostStore) GetPostIdBeforeTime(channelId string, time int64, collapsedThreads bool) (string, error) {
 	return s.getPostIdAroundTime(channelId, time, true, collapsedThreads)
 }

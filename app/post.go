@@ -886,6 +886,19 @@ func (a *App) GetPostsAroundPost(before bool, options model.GetPostsOptions) (*m
 	return postList, nil
 }
 
+func (a *App) GetChannelPostsUA(channelID string, after, before int64, desc bool, page, perPage int) (*model.PostList, *model.AppError) {
+	var postList *model.PostList
+	var err error
+
+	postList, err = a.Srv().Store.Post().GetChannelPostsUA(channelID, after, before, desc, page, perPage)
+
+	if err != nil {
+		return nil, model.NewAppError("GetChannelPostsUA", "app.post.get_channel_posts_ua.get.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return postList, nil
+}
+
 func (a *App) GetPostAfterTime(channelID string, time int64, collapsedThreads bool) (*model.Post, *model.AppError) {
 	post, err := a.Srv().Store.Post().GetPostAfterTime(channelID, time, collapsedThreads)
 	if err != nil {

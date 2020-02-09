@@ -423,6 +423,11 @@ func (_m *PostStore) GetPostsAfter(options model.GetPostsOptions) (*model.PostLi
 	return r0, r1
 }
 
+func (_m *PostStore) GetChannelPostsUA(channelId string, after, before int64, desc bool, page int, perPage int) (*model.PostList, error) {
+	var r0 *model.PostList
+	return r0, nil
+}
+
 // GetPostsBatchForIndexing provides a mock function with given fields: startTime, endTime, limit
 func (_m *PostStore) GetPostsBatchForIndexing(startTime int64, endTime int64, limit int) ([]*model.PostForIndexing, error) {
 	ret := _m.Called(startTime, endTime, limit)

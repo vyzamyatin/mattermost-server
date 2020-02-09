@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,9 @@ const (
 	PendingPostIDsCacheTTL  = 30 * time.Second
 	PageDefault             = 0
 )
+
+var reTripleBackticks1 = regexp.MustCompile("([^\n])```")
+var reTripleBackticks2 = regexp.MustCompile("```([^\n])")
 
 func (a *App) CreatePostAsUser(post *model.Post, currentSessionId string, setOnline bool) (*model.Post, *model.AppError) {
 	// Check that channel has not been deleted
@@ -158,6 +162,9 @@ func (a *App) deduplicateCreatePost(post *model.Post) (foundPost *model.Post, er
 }
 
 func (a *App) CreatePost(post *model.Post, channel *model.Channel, triggerWebhooks, setOnline bool) (savedPost *model.Post, err *model.AppError) {
+	post.Message = reTripleBackticks1.ReplaceAllString(post.Message, "$1\n```")
+	post.Message = reTripleBackticks2.ReplaceAllString(post.Message, "```\n$1")
+
 	foundPost, err := a.deduplicateCreatePost(post)
 	if err != nil {
 		return nil, err
@@ -536,6 +543,9 @@ func (a *App) DeleteEphemeralPost(userID, postID string) {
 }
 
 func (a *App) UpdatePost(post *model.Post, safeUpdate bool) (*model.Post, *model.AppError) {
+	post.Message = reTripleBackticks1.ReplaceAllString(post.Message, "$1\n```")
+	post.Message = reTripleBackticks2.ReplaceAllString(post.Message, "```\n$1")
+
 	post.SanitizeProps()
 
 	postLists, nErr := a.Srv().Store.Post().Get(context.Background(), post.Id, false, false, false)
@@ -655,6 +665,11 @@ func (a *App) UpdatePost(post *model.Post, safeUpdate bool) (*model.Post, *model
 }
 
 func (a *App) PatchPost(postID string, patch *model.PostPatch) (*model.Post, *model.AppError) {
+	if patch.Message != nil {
+		*patch.Message = reTripleBackticks1.ReplaceAllString(*patch.Message, "$1\n```")
+		*patch.Message = reTripleBackticks2.ReplaceAllString(*patch.Message, "```\n$1")
+	}
+
 	post, err := a.GetSinglePost(postID)
 	if err != nil {
 		return nil, err

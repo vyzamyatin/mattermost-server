@@ -290,6 +290,7 @@ type UserStore interface {
 	GetByAuth(authData *string, authService string) (*model.User, *model.AppError)
 	GetAllUsingAuthService(authService string) ([]*model.User, *model.AppError)
 	GetByUsername(username string) (*model.User, *model.AppError)
+	GetByNickname(nickname string) (*model.User, *model.AppError)
 	GetForLogin(loginId string, allowSignInWithUsername, allowSignInWithEmail bool) (*model.User, *model.AppError)
 	VerifyEmail(userId, email string) (string, *model.AppError)
 	GetEtagForAllProfiles() string

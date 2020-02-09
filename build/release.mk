@@ -71,46 +71,6 @@ endif
 
 	@# ----- PLATFORM SPECIFIC -----
 
-	@# Make osx package
-	@# Copy binary
-ifeq ($(BUILDER_GOOS_GOARCH),"darwin_amd64")
-	cp $(GOPATH)/bin/mattermost $(DIST_PATH)/bin # from native bin dir, not cross-compiled
-	cp $(GOPATH)/bin/platform $(DIST_PATH)/bin # from native bin dir, not cross-compiled
-else
-	cp $(GOPATH)/bin/darwin_amd64/mattermost $(DIST_PATH)/bin # from cross-compiled bin dir
-	cp $(GOPATH)/bin/darwin_amd64/platform $(DIST_PATH)/bin # from cross-compiled bin dir
-endif
-	@# Strip and prepackage plugins
-	@for plugin_package in $(PLUGIN_PACKAGES) ; do \
-		cat tmpprepackaged/$$plugin_package.tar.gz | gunzip | tar --wildcards --delete "*windows*" --delete "*linux*" | gzip  > $(DIST_PATH)/prepackaged_plugins/$$plugin_package.tar.gz; \
-	done
-	@# Package
-	tar -C dist -czf $(DIST_PATH)-$(BUILD_TYPE_NAME)-osx-amd64.tar.gz mattermost
-	@# Cleanup
-	rm -f $(DIST_PATH)/bin/mattermost
-	rm -f $(DIST_PATH)/bin/platform
-	rm -f $(DIST_PATH)/prepackaged_plugins/*
-
-	@# Make windows package
-	@# Copy binary
-ifeq ($(BUILDER_GOOS_GOARCH),"windows_amd64")
-	cp $(GOPATH)/bin/mattermost.exe $(DIST_PATH)/bin # from native bin dir, not cross-compiled
-	cp $(GOPATH)/bin/platform.exe $(DIST_PATH)/bin # from native bin dir, not cross-compiled
-else
-	cp $(GOPATH)/bin/windows_amd64/mattermost.exe $(DIST_PATH)/bin # from cross-compiled bin dir
-	cp $(GOPATH)/bin/windows_amd64/platform.exe $(DIST_PATH)/bin # from cross-compiled bin dir
-endif
-	@# Strip and prepackage plugins
-	@for plugin_package in $(PLUGIN_PACKAGES) ; do \
-		cat tmpprepackaged/$$plugin_package.tar.gz | gunzip | tar --wildcards --delete "*darwin*" --delete "*linux*" | gzip  > $(DIST_PATH)/prepackaged_plugins/$$plugin_package.tar.gz; \
-	done
-	@# Package
-	cd $(DIST_ROOT) && zip -9 -r -q -l mattermost-$(BUILD_TYPE_NAME)-windows-amd64.zip mattermost && cd ..
-	@# Cleanup
-	rm -f $(DIST_PATH)/bin/mattermost.exe
-	rm -f $(DIST_PATH)/bin/platform.exe
-	rm -f $(DIST_PATH)/prepackaged_plugins/*
-
 	@# Make linux package
 	@# Copy binary
 ifeq ($(BUILDER_GOOS_GOARCH),"linux_amd64")

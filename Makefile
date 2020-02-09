@@ -10,7 +10,7 @@ BUILD_DATE = $(shell date -u)
 BUILD_HASH = $(shell git rev-parse HEAD)
 # If we don't set the build number it defaults to dev
 ifeq ($(BUILD_NUMBER),)
-	BUILD_NUMBER := dev
+	BUILD_NUMBER := ua-5.19.1
 endif
 BUILD_ENTERPRISE_DIR ?= ../enterprise
 BUILD_ENTERPRISE ?= true
@@ -117,7 +117,10 @@ all: run ## Alias for 'run'.
 
 include build/*.mk
 
-start-docker: ## Starts the docker containers for local development.
+start-docker:
+stop-docker:
+
+xstart-docker: ## Starts the docker containers for local development.
 ifneq ($(IS_CI),false)
 	@echo CI Build: skipping docker start
 else ifeq ($(MM_NO_DOCKER),true)
@@ -129,7 +132,7 @@ else
 	cat tests/${LDAP_DATA}-data.ldif | docker-compose exec -T openldap bash -c 'ldapadd -x -D "cn=admin,dc=mm,dc=test,dc=com" -w mostest || true';
 endif
 
-stop-docker: ## Stops the docker containers for local development.
+xstop-docker: ## Stops the docker containers for local development.
 ifeq ($(MM_NO_DOCKER),true)
 	@echo No Docker Enabled: skipping docker stop
 else

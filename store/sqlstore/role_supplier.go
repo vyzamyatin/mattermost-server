@@ -38,7 +38,6 @@ type channelRolesPermissions struct {
 	HigherScopedGuestPermissions string
 	HigherScopedUserPermissions  string
 	HigherScopedAdminPermissions string
-	TeamSchemeID                 string
 }
 
 func NewRoleFromModel(role *model.Role) *Role {
@@ -257,7 +256,6 @@ func (s *SqlRoleStore) higherScopedPermissionsQuery(roleNames []string) string {
 			RoleSchemes.DefaultChannelGuestRole AS GuestRoleName,
 			RoleSchemes.DefaultChannelUserRole AS UserRoleName,
 			RoleSchemes.DefaultChannelAdminRole AS AdminRoleName,
-			COALESCE(Teams.SchemeId, '') AS TeamSchemeId,
 			GuestRoles.Permissions AS HigherScopedGuestPermissions,
 			UserRoles.Permissions AS HigherScopedUserPermissions,
 			AdminRoles.Permissions AS HigherScopedAdminPermissions
@@ -278,7 +276,6 @@ func (s *SqlRoleStore) higherScopedPermissionsQuery(roleNames []string) string {
 			Schemes.DefaultChannelGuestRole AS GuestRoleName,
 			Schemes.DefaultChannelUserRole AS UserRoleName,
 			Schemes.DefaultChannelAdminRole AS AdminRoleName,
-			COALESCE(Teams.SchemeId, '') AS TeamSchemeId,
 			GuestRoles.Permissions AS HigherScopedGuestPermissions,
 			UserRoles.Permissions AS HigherScopedUserPermissions,
 			AdminRoles.Permissions AS HigherScopedAdminPermissions
@@ -301,7 +298,6 @@ func (s *SqlRoleStore) higherScopedPermissionsQuery(roleNames []string) string {
 }
 
 func (s *SqlRoleStore) HigherScopedPermissions(roleNames []string) (map[string][]string, *model.AppError) {
-
 	sql := s.higherScopedPermissionsQuery(roleNames)
 
 	var rolesPermissions []*channelRolesPermissions

@@ -827,6 +827,10 @@ func (a *App) GetPostsForChannelAroundLastUnread(channelId, userId string, limit
 	return postList, nil
 }
 
+func (a *App) GetChannelPostsUA(channelId string, after, before int64, desc bool, page, perPage int) (*model.PostList, *model.AppError) {
+	return a.Srv.Store.Post().GetChannelPostsUA(channelId, after, before, desc, page, perPage)
+}
+
 func (a *App) DeletePost(postId, deleteByID string) (*model.Post, *model.AppError) {
 	post, err := a.Srv.Store.Post().GetSingle(postId)
 	if err != nil {

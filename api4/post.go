@@ -23,6 +23,7 @@ func (api *API) InitPost() {
 	api.BaseRoutes.Post.Handle("/thread", api.ApiSessionRequired(getPostThread)).Methods("GET")
 	api.BaseRoutes.Post.Handle("/files/info", api.ApiSessionRequired(getFileInfosForPost)).Methods("GET")
 	api.BaseRoutes.PostsForChannel.Handle("", api.ApiSessionRequired(getPostsForChannel)).Methods("GET")
+	api.BaseRoutes.PostsForChannel.Handle("/ua", api.ApiSessionRequired(getChannelPostsUA)).Methods("GET")
 	api.BaseRoutes.PostsForUser.Handle("/flagged", api.ApiSessionRequired(getFlaggedPostsForUser)).Methods("GET")
 
 	api.BaseRoutes.ChannelForUser.Handle("/posts/unread", api.ApiSessionRequired(getPostsForChannelAroundLastUnread)).Methods("GET")
@@ -210,6 +211,64 @@ func getPostsForChannel(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	c.App.AddCursorIdsForPostList(list, afterPost, beforePost, since, page, perPage)
+	clientPostList := c.App.PreparePostListForClient(list)
+
+	w.Write([]byte(clientPostList.ToJson()))
+}
+
+func getChannelPostsUA(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireChannelId()
+	if c.Err != nil {
+		return
+	}
+
+	afterString := r.URL.Query().Get("after")
+	beforeString := r.URL.Query().Get("before")
+	descString := r.URL.Query().Get("desc")
+
+	var after, before int64
+	var desc bool
+	var parseError error
+
+	if len(afterString) > 0 {
+		after, parseError = strconv.ParseInt(afterString, 10, 64)
+		if parseError != nil {
+			c.SetInvalidParam("after")
+			return
+		}
+	}
+
+	if len(beforeString) > 0 {
+		before, parseError = strconv.ParseInt(beforeString, 10, 64)
+		if parseError != nil {
+			c.SetInvalidParam("before")
+			return
+		}
+	}
+
+	if len(descString) > 0 {
+		desc, parseError = strconv.ParseBool(descString)
+		if parseError != nil {
+			c.SetInvalidParam("desc")
+			return
+		}
+	}
+
+	if !c.App.SessionHasPermissionToChannel(*c.App.Session(), c.Params.ChannelId, model.PERMISSION_READ_CHANNEL) {
+		c.SetPermissionError(model.PERMISSION_READ_CHANNEL)
+		return
+	}
+
+	var list *model.PostList
+	var err *model.AppError
+
+	list, err = c.App.GetChannelPostsUA(c.Params.ChannelId, after, before, desc, c.Params.Page, c.Params.PerPage)
+
+	if err != nil {
+		c.Err = err
+		return
+	}
+
 	clientPostList := c.App.PreparePostListForClient(list)
 
 	w.Write([]byte(clientPostList.ToJson()))

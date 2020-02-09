@@ -854,6 +854,10 @@ func (a *App) GetPostsAroundPost(before bool, options model.GetPostsOptions) (*m
 	return postList, nil
 }
 
+func (a *App) GetChannelPostsUA(channelId string, after, before int64, desc bool, page, perPage int) (*model.PostList, *model.AppError) {
+	return a.Srv().Store.Post().GetChannelPostsUA(channelId, after, before, desc, page, perPage)
+}
+
 func (a *App) GetPostAfterTime(channelId string, time int64) (*model.Post, *model.AppError) {
 	post, err := a.Srv().Store.Post().GetPostAfterTime(channelId, time)
 	if err != nil {

@@ -1008,4 +1008,6 @@ type AppIface interface {
 	ViewChannel(view *model.ChannelView, userId string, currentSessionId string) (map[string]int64, *model.AppError)
 	WaitForChannelMembership(channelId string, userId string)
 	WriteFile(fr io.Reader, path string) (int64, *model.AppError)
+	// VZ
+	GetChannelPostsUA(channelId string, after, before int64, desc bool, page, perPage int) (*model.PostList, *model.AppError)
 }

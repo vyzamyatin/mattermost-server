@@ -24,7 +24,7 @@ BUILD_DATE = $(shell date -u)
 BUILD_HASH = $(shell git rev-parse HEAD)
 # If we don't set the build number it defaults to dev
 ifeq ($(BUILD_NUMBER),)
-	BUILD_NUMBER := dev
+	BUILD_NUMBER := ua-5.34.2
 endif
 BUILD_ENTERPRISE_DIR ?= ../enterprise
 BUILD_ENTERPRISE ?= true
@@ -153,7 +153,10 @@ ifeq ($(BUILD_ENTERPRISE_READY),true)
 endif
 ENABLED_DOCKER_SERVICES:=$(ENABLED_DOCKER_SERVICES) $(TEMP_DOCKER_SERVICES)
 
-start-docker: ## Starts the docker containers for local development.
+start-docker:
+stop-docker:
+
+xstart-docker: ## Starts the docker containers for local development.
 ifneq ($(IS_CI),false)
 	@echo CI Build: skipping docker start
 else ifeq ($(MM_NO_DOCKER),true)
@@ -177,7 +180,7 @@ ifeq ($(BUILD_ENTERPRISE_READY),true)
 	docker-compose -f docker-compose.yaml up haproxy
 endif
 
-stop-docker: ## Stops the docker containers for local development.
+xstop-docker: ## Stops the docker containers for local development.
 ifeq ($(MM_NO_DOCKER),true)
 	@echo No Docker Enabled: skipping docker stop
 else

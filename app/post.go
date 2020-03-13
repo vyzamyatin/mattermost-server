@@ -599,8 +599,10 @@ func (a *App) UpdatePost(post *model.Post, safeUpdate bool) (*model.Post, *model
 }
 
 func (a *App) PatchPost(postId string, patch *model.PostPatch) (*model.Post, *model.AppError) {
-	*patch.Message = reTripleBackticks1.ReplaceAllString(*patch.Message, "$1\n```")
-	*patch.Message = reTripleBackticks2.ReplaceAllString(*patch.Message, "```\n$1")
+	if patch.Message != nil {
+		*patch.Message = reTripleBackticks1.ReplaceAllString(*patch.Message, "$1\n```")
+		*patch.Message = reTripleBackticks2.ReplaceAllString(*patch.Message, "```\n$1")
+	}
 
 	post, err := a.GetSinglePost(postId)
 	if err != nil {

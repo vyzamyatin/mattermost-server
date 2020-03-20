@@ -288,6 +288,7 @@ type PostStore interface {
 	GetPostsAfter(options model.GetPostsOptions) (*model.PostList, error)
 	GetPostsSince(options model.GetPostsSinceOptions, allowFromCache bool) (*model.PostList, error)
 	GetChannelPostsUA(channelId string, after, before int64, desc bool, page, perPage int) (*model.PostList, error)
+	CountChannelPostsUA(channelId string, after int64) (*model.PostCount, error)
 	GetPostAfterTime(channelID string, time int64, collapsedThreads bool) (*model.Post, error)
 	GetPostIdAfterTime(channelID string, time int64, collapsedThreads bool) (string, error)
 	GetPostIdBeforeTime(channelID string, time int64, collapsedThreads bool) (string, error)

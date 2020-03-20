@@ -1074,6 +1074,21 @@ func (s *SqlPostStore) GetChannelPostsUA(channelId string, after, before int64, 
 	}
 }
 
+func (s *SqlPostStore) CountChannelPostsUA(channelId string, after int64) (*model.PostCount, error) {
+	params := map[string]interface{}{"ChannelId": channelId, "After": after}
+
+	query := `SELECT COUNT(*) FROM Posts WHERE ChannelId = :ChannelId AND DeleteAt = 0 AND CreateAt > :After AND Type !~ '^system_'`
+
+	count := model.PostCount{}
+	err := s.GetReplica().SelectOne(&count, query, params)
+
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to count Posts with channelId=%s", channelId)
+	} else {
+		return &count, nil
+	}
+}
+
 func (s *SqlPostStore) GetPostIdBeforeTime(channelId string, time int64, collapsedThreads bool) (string, error) {
 	return s.getPostIdAroundTime(channelId, time, true, collapsedThreads)
 }

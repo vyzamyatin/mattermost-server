@@ -789,6 +789,21 @@ func (s *SqlPostStore) GetChannelPostsUA(channelId string, after, before int64, 
 	}
 }
 
+func (s *SqlPostStore) CountChannelPostsUA(channelId string, after int64) (*model.PostCount, *model.AppError) {
+	params := map[string]interface{}{"ChannelId": channelId, "After": after}
+
+	query := `SELECT COUNT(*) FROM Posts WHERE ChannelId = :ChannelId AND DeleteAt = 0 AND CreateAt > :After AND Type !~ '^system_'`
+
+	count := model.PostCount{}
+	err := s.GetReplica().SelectOne(&count, query, params)
+
+	if err != nil {
+		return nil, model.NewAppError("SqlPostStore.GetPostContext", "store.sql_post.get_posts_custom.app_error", nil, "channelId="+channelId+err.Error(), http.StatusInternalServerError)
+	} else {
+		return &count, nil
+	}
+}
+
 func (s *SqlPostStore) getRootPosts(channelId string, offset int, limit int) ([]*model.Post, *model.AppError) {
 	var posts []*model.Post
 	_, err := s.GetReplica().Select(&posts, "SELECT * FROM Posts WHERE ChannelId = :ChannelId AND DeleteAt = 0 ORDER BY CreateAt DESC LIMIT :Limit OFFSET :Offset", map[string]interface{}{"ChannelId": channelId, "Offset": offset, "Limit": limit})

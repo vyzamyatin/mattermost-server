@@ -833,6 +833,10 @@ func (a *App) GetChannelPostsUA(channelId string, after, before int64, desc bool
 	return a.Srv.Store.Post().GetChannelPostsUA(channelId, after, before, desc, page, perPage)
 }
 
+func (a *App) CountChannelPostsUA(channelId string, after int64) (*model.PostCount, *model.AppError) {
+	return a.Srv.Store.Post().CountChannelPostsUA(channelId, after)
+}
+
 func (a *App) DeletePost(postId, deleteByID string) (*model.Post, *model.AppError) {
 	post, err := a.Srv.Store.Post().GetSingle(postId)
 	if err != nil {

@@ -1010,4 +1010,5 @@ type AppIface interface {
 	WriteFile(fr io.Reader, path string) (int64, *model.AppError)
 	// VZ
 	GetChannelPostsUA(channelId string, after, before int64, desc bool, page, perPage int) (*model.PostList, *model.AppError)
+	CountChannelPostsUA(channelId string, after int64) (*model.PostCount, *model.AppError)
 }

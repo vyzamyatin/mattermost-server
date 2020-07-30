@@ -1,0 +1,13 @@
+Source: ua-mattermost
+Section: non-free/internal
+Priority: optional
+Maintainer: Vyacheslav Zamyatin <vyacheslav.zamyatin@dataegret.com>
+Build-Depends: debhelper (>= 9)
+Standards-Version: 3.9.8
+Homepage: https://dataegret.com/
+Vcs-Git: https://github.com/vyzamyatin/mattermost-server.git
+
+Package: ua-mattermost
+Architecture: all
+Depends: nginx
+Description: UserArea Mattermost

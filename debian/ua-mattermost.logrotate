@@ -1,4 +1,4 @@
-/opt/mattermost/logs/mattermost.log {
+/var/log/mattermost/mattermost.log /var/log/mattermost/notifications.log {
     daily
     rotate 14
     compress

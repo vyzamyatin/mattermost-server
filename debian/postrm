@@ -15,9 +15,10 @@ set -e
 
 case "$1" in
     purge)
-        rm -f /opt/mattermost/logs/mattermost.log*
         rm -rf /opt/mattermost/client/plugins
         rm -rf /opt/mattermost/plugins
+        rm -f /var/log/mattermost/mattermost.log*
+        rm -f /var/log/mattermost/notifications.log*
     ;;
 
     remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)

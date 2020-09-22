@@ -464,6 +464,20 @@ func (a *App) GetUserByUsername(username string) (*model.User, *model.AppError) 
 	return result, nil
 }
 
+func (a *App) GetUserByNicknameUA(nickname string) (*model.User, *model.AppError) {
+	result, err := a.Srv().Store.User().GetByNicknameUA(nickname)
+	if err != nil {
+		var nfErr *store.ErrNotFound
+		switch {
+		case errors.As(err, &nfErr):
+			return nil, model.NewAppError("GetUserByNickname", "app.user.get_by_nickname.app_error", nil, nfErr.Error(), http.StatusNotFound)
+		default:
+			return nil, model.NewAppError("GetUserByNickname", "app.user.get_by_nickname.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	}
+	return result, nil
+}
+
 func (a *App) GetUserByEmail(email string) (*model.User, *model.AppError) {
 	user, err := a.Srv().Store.User().GetByEmail(email)
 	if err != nil {

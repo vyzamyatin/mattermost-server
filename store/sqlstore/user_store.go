@@ -1127,6 +1127,25 @@ func (us SqlUserStore) GetByUsername(username string) (*model.User, error) {
 	return user, nil
 }
 
+func (us SqlUserStore) GetByNicknameUA(nickname string) (*model.User, error) {
+	query := us.usersQuery.Where("u.Nickname = ?", nickname)
+
+	queryString, args, err := query.ToSql()
+	if err != nil {
+		return nil, errors.Wrap(err, "get_by_nickname_tosql")
+	}
+
+	var user *model.User
+	if err := us.GetReplica().SelectOne(&user, queryString, args...); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errors.Wrap(store.NewErrNotFound("User", fmt.Sprintf("nickname=%s", nickname)), "failed to find User")
+		}
+		return nil, errors.Wrapf(err, "failed to find User with nickname=%s", nickname)
+	}
+
+	return user, nil
+}
+
 func (us SqlUserStore) GetForLogin(loginId string, allowSignInWithUsername, allowSignInWithEmail bool) (*model.User, error) {
 	query := us.usersQuery
 	if allowSignInWithUsername && allowSignInWithEmail {

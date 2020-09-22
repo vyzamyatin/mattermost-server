@@ -67,6 +67,7 @@ func (api *API) InitUser() {
 	api.BaseRoutes.Users.Handle("/logout", api.ApiHandler(logout)).Methods("POST")
 
 	api.BaseRoutes.UserByUsername.Handle("", api.ApiSessionRequired(getUserByUsername)).Methods("GET")
+	api.BaseRoutes.Users.Handle("/nickname/ua", api.ApiSessionRequired(getUserByNicknameUA)).Methods("POST")
 	api.BaseRoutes.UserByEmail.Handle("", api.ApiSessionRequired(getUserByEmail)).Methods("GET")
 
 	api.BaseRoutes.User.Handle("/sessions", api.ApiSessionRequired(getSessions)).Methods("GET")
@@ -289,6 +290,48 @@ func getUserByUsername(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.App.SanitizeProfile(user, c.IsSystemAdmin())
 	}
 	w.Header().Set(model.HEADER_ETAG_SERVER, etag)
+	w.Write([]byte(user.ToJson()))
+}
+
+func getUserByNicknameUA(c *Context, w http.ResponseWriter, r *http.Request) {
+	props := model.StringInterfaceFromJson(r.Body)
+	nickname, ok := props["nickname"].(string)
+	if !ok || len(nickname) == 0 {
+		c.SetInvalidParam("nickname")
+		return
+	}
+
+	user, err := c.App.GetUserByNicknameUA(nickname)
+	if err != nil {
+		restrictions, err2 := c.App.GetViewUsersRestrictions(c.App.Session().UserId)
+		if err2 != nil {
+			c.Err = err2
+			return
+		}
+		if restrictions != nil {
+			c.SetPermissionError(model.PERMISSION_VIEW_MEMBERS)
+			return
+		}
+		c.Err = err
+		return
+	}
+
+	canSee, err := c.App.UserCanSeeOtherUser(c.App.Session().UserId, user.Id)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	if !canSee {
+		c.SetPermissionError(model.PERMISSION_VIEW_MEMBERS)
+		return
+	}
+
+	if c.App.Session().UserId == user.Id {
+		user.Sanitize(map[string]bool{})
+	} else {
+		c.App.SanitizeProfile(user, c.IsSystemAdmin())
+	}
 	w.Write([]byte(user.ToJson()))
 }
 

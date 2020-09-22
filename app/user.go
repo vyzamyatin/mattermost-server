@@ -168,8 +168,10 @@ func (a *App) CreateUserAsAdmin(user *model.User, redirect string) (*model.User,
 		return nil, err
 	}
 
-	if err := a.Srv().EmailService.sendWelcomeEmail(ruser.Id, ruser.Email, ruser.EmailVerified, ruser.DisableWelcomeEmail, ruser.Locale, a.GetSiteURL(), redirect); err != nil {
-		mlog.Warn("Failed to send welcome email to the new user, created by system admin", mlog.Err(err))
+	if !rePseudoUser.MatchString(user.Username) {
+		if err := a.Srv().EmailService.sendWelcomeEmail(ruser.Id, ruser.Email, ruser.EmailVerified, ruser.DisableWelcomeEmail, ruser.Locale, a.GetSiteURL(), redirect); err != nil {
+			mlog.Warn("Failed to send welcome email to the new user, created by system admin", mlog.Err(err))
+		}
 	}
 
 	return ruser, nil

@@ -538,6 +538,11 @@ func (_m *UserStore) GetChannelGroupUsers(channelID string) ([]*model.User, *mod
 	return r0, r1
 }
 
+func (_m *UserStore) GetByNicknameUA(nickname string) (*model.User, *model.AppError) {
+	var r0 *model.User
+	return r0, nil
+}
+
 // GetEtagForAllProfiles provides a mock function with given fields:
 func (_m *UserStore) GetEtagForAllProfiles() string {
 	ret := _m.Called()

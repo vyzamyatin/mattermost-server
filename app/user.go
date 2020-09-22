@@ -437,6 +437,15 @@ func (a *App) GetUserByUsername(username string) (*model.User, *model.AppError) 
 	return result, nil
 }
 
+func (a *App) GetUserByNicknameUA(nickname string) (*model.User, *model.AppError) {
+	result, err := a.Srv().Store.User().GetByNicknameUA(nickname)
+	if err != nil && err.Id == "store.sql_user.get_by_username.app_error" {
+		err.StatusCode = http.StatusNotFound
+		return nil, err
+	}
+	return result, nil
+}
+
 func (a *App) GetUserByEmail(email string) (*model.User, *model.AppError) {
 	user, err := a.Srv().Store.User().GetByEmail(email)
 	if err != nil {

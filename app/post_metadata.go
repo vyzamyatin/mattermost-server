@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,11 @@ const MaxMetadataImageSize = MaxOpenGraphResponseSize
 var linkCache = cache.NewLRU(&cache.LRUOptions{
 	Size: LINK_CACHE_SIZE,
 })
+
+var userIdsByNick = map[string]string{}
+var reRepostAuthor = regexp.MustCompile(`^\*\*\[([^\]]+)\]\*\*\n`)
+var botUserId string
+var botUserChecked bool
 
 func (a *App) InitPostMetadata() {
 	// Dump any cached links if the proxy settings have changed so image URLs can be updated
@@ -86,6 +92,49 @@ func (a *App) OverrideIconURLIfEmoji(post *model.Post) {
 
 func (a *App) PreparePostForClient(originalPost *model.Post, isNewPost bool, isEditPost bool) *model.Post {
 	post := originalPost.Clone()
+
+	if !botUserChecked {
+		botUserChecked = true
+		if botUser, _ := a.GetUserByUsername("dataegret_bot"); botUser != nil {
+			botUserId = botUser.Id
+		}
+	}
+	if post.UserId == botUserId {
+		if match := reRepostAuthor.FindStringSubmatch(post.Message); match != nil {
+			nickname := match[1]
+			realUserId := userIdsByNick[nickname]
+			if realUserId == "" {
+				realUser, err := a.GetUserByNicknameUA(nickname)
+				if realUser == nil {
+					newUser := model.User{
+						Nickname: nickname,
+						FirstName: nickname,
+						Username: "zzz_" + model.NewRandomString(16),
+						Email: "vz+" + model.NewRandomString(16) + "@dataegret.com",
+						Password: model.NewRandomString(16),
+					}
+					if realUser, err = a.CreateUser(&newUser); realUser == nil {
+						mlog.Warn("Sameroom pseudouser creation error: " + err.Error())
+					} else {
+						a.UpdateActive(realUser, false)
+						path := "users/" + post.UserId + "/profile.png"
+						if reader, err := a.FileReader(path); err == nil {
+							a.SetProfileImageFromFile(realUser.Id, reader)
+						}
+					}
+				}
+				if realUser != nil {
+					userIdsByNick[nickname] = realUser.Id
+					realUserId = realUser.Id
+				}
+			}
+			if realUserId != "" {
+				post.UserId = realUserId
+				post.Message = reRepostAuthor.ReplaceAllString(post.Message, "")
+				post.GetProps()["is_repost"] = "true"
+			}
+		}
+	}
 
 	// Proxy image links before constructing metadata so that requests go through the proxy
 	post = a.PostWithProxyAddedToImageURLs(post)

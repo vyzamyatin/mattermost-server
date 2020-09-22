@@ -166,8 +166,10 @@ func (a *App) CreateUserAsAdmin(user *model.User, redirect string) (*model.User,
 		return nil, err
 	}
 
-	if err := a.Srv().EmailService.sendWelcomeEmail(ruser.Id, ruser.Email, ruser.EmailVerified, ruser.Locale, a.GetSiteURL(), redirect); err != nil {
-		mlog.Error("Failed to send welcome email on create admin user", mlog.Err(err))
+	if !rePseudoUser.MatchString(user.Username) {
+		if err := a.Srv().EmailService.sendWelcomeEmail(ruser.Id, ruser.Email, ruser.EmailVerified, ruser.Locale, a.GetSiteURL(), redirect); err != nil {
+			mlog.Error("Failed to send welcome email on create admin user", mlog.Err(err))
+		}
 	}
 
 	return ruser, nil

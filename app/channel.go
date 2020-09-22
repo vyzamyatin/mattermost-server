@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/mattermost/mattermost-server/v5/store"
 	"github.com/mattermost/mattermost-server/v5/utils"
 )
+
+var rePseudoUser = regexp.MustCompile(`^zzz_`)
 
 // CreateDefaultChannels creates channels in the given team for each channel returned by (*App).DefaultChannelNames.
 //
@@ -1742,6 +1745,10 @@ func (a *App) postJoinChannelMessage(user *model.User, channel *model.Channel) *
 }
 
 func (a *App) postJoinTeamMessage(user *model.User, channel *model.Channel) *model.AppError {
+	if rePseudoUser.MatchString(user.Username) {
+		return nil
+	}
+
 	post := &model.Post{
 		ChannelId: channel.Id,
 		Message:   fmt.Sprintf(utils.T("api.team.join_team.post_and_forget"), user.Username),
@@ -1845,6 +1852,10 @@ func (a *App) postLeaveChannelMessage(user *model.User, channel *model.Channel) 
 }
 
 func (a *App) PostAddToChannelMessage(user *model.User, addedUser *model.User, channel *model.Channel, postRootId string) *model.AppError {
+	if rePseudoUser.MatchString(addedUser.Username) {
+		return nil
+	}
+
 	message := fmt.Sprintf(utils.T("api.channel.add_member.added"), addedUser.Username, user.Username)
 	postType := model.POST_ADD_TO_CHANNEL
 
@@ -1897,6 +1908,10 @@ func (a *App) postAddToTeamMessage(user *model.User, addedUser *model.User, chan
 }
 
 func (a *App) postRemoveFromChannelMessage(removerUserId string, removedUser *model.User, channel *model.Channel) *model.AppError {
+	if rePseudoUser.MatchString(removedUser.Username) {
+		return nil
+	}
+
 	post := &model.Post{
 		ChannelId: channel.Id,
 		// Message here embeds `@username`, not just `username`, to ensure that mentions

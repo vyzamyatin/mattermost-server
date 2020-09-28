@@ -699,7 +699,7 @@ func (a *App) DeactivateMfa(userId string) *model.AppError {
 	return nil
 }
 
-func CreateProfileImage(username string, userId string, initialFont string) ([]byte, *model.AppError) {
+func CreateProfileImage(username string, nickname string, userId string, initialFont string) ([]byte, *model.AppError) {
 	colors := []color.NRGBA{
 		{197, 8, 126, 255},
 		{227, 207, 18, 255},
@@ -734,6 +734,10 @@ func CreateProfileImage(username string, userId string, initialFont string) ([]b
 	seed := h.Sum32()
 
 	initial := string(strings.ToUpper(username)[0])
+	if rePseudoUser.MatchString(username) {
+		runes := []rune(strings.ToUpper(nickname))
+		initial = string(runes[0])
+	}
 
 	font, err := getFont(initialFont)
 	if err != nil {
@@ -819,7 +823,7 @@ func (a *App) GetDefaultProfileImage(user *model.User) ([]byte, *model.AppError)
 		img = model.BotDefaultImage
 		appErr = nil
 	} else {
-		img, appErr = CreateProfileImage(user.Username, user.Id, *a.Config().FileSettings.InitialFont)
+		img, appErr = CreateProfileImage(user.Username, user.Nickname, user.Id, *a.Config().FileSettings.InitialFont)
 	}
 	if appErr != nil {
 		return nil, appErr
